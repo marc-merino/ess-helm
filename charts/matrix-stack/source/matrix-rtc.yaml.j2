@@ -23,6 +23,7 @@ livekitAuth:
 {{- sub_schema_values.redisOrValkey() }}
 
 # Use 0 replicas to stop the MatrixRTC authoriser
+# More than 1 replica requires Redis/Valkey and image tag >= 0.8.0
 replicas: 1
 
 {{- sub_schema_values.ingress() }}

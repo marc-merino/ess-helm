@@ -645,6 +645,7 @@ matrixRTC:
     # tls: false
 
   # Use 0 replicas to stop the MatrixRTC authoriser
+  # More than 1 replica requires Redis/Valkey and image tag >= 0.8.0
   replicas: 1
   ## How this ingress should be constructed
   ingress:

@@ -7,7 +7,7 @@ import pyhelm3
 import pytest
 import yaml
 
-from .utils import PERSISTENT_WORKLOAD_KINDS, template_id
+from .utils import PERSISTENT_WORKLOAD_KINDS, iterate_pod_template, template_id
 
 
 @pytest.mark.parametrize("values_file", ["matrix-rtc-minimal-values.yaml"])
@@ -234,3 +234,53 @@ async def test_turn_tls_pod_termination_with_secret(values, templates):
     assert "key_file" in turn_config, "key_file should exist for pod termination with manual secret"
     assert turn_config["cert_file"] == "/turn-tls/tls.crt", "cert_file path incorrect"
     assert turn_config["key_file"] == "/turn-tls/tls.key", "key_file path incorrect"
+
+
+@pytest.mark.parametrize("values_file", ["matrix-rtc-minimal-values.yaml"])
+@pytest.mark.parametrize(
+    ("redis", "replicas", "tag", "coordinated"),
+    [
+        ("bundled", 1, "0.7.0", False),
+        ("bundled", 1, "0.8.0", True),
+        ("bundled", 2, "0.8.0+build.1", True),
+        ("external", 2, "0.8.0", True),
+        ("none", 1, "0.8.0", False),
+    ],
+)
+@pytest.mark.asyncio_cooperative
+async def test_authorisation_service_replicas(values, make_templates, redis, replicas, tag, coordinated):
+    values["matrixRTC"]["replicas"] = replicas
+    values["matrixRTC"]["image"] = {"tag": tag}
+    if redis == "external":
+        values["matrixRTC"]["redisOrValkey"] = {"host": "redis.example.test"}
+    elif redis == "none":
+        values["matrixRTC"]["sfu"] = {"redisOrValkey": {"host": "sfu-redis.example.test"}}
+
+    pod = next(
+        pod
+        for pod in iterate_pod_template(await make_templates(values), kinds=("Deployment",))
+        if pod.manifest["metadata"]["name"].endswith("-matrix-rtc-authorisation-service")
+    )
+    assert pod.manifest["spec"]["replicas"] == replicas
+    env = {entry["name"]: entry for entry in pod.pod_template["spec"]["containers"][0]["env"]}
+    assert ("LIVEKIT_JWT_REPLICA_IP" in env) == coordinated
+
+
+@pytest.mark.parametrize("values_file", ["matrix-rtc-minimal-values.yaml"])
+@pytest.mark.parametrize(
+    ("redis", "tag", "error"),
+    [
+        ("none", "0.8.0", "requires Redis/Valkey"),
+        ("bundled", "0.7.0", r"matrixRTC.image.tag.*>= 0.8.0"),
+        ("bundled", "0.8.0-rc.1", r"matrixRTC.image.tag.*>= 0.8.0"),
+        ("bundled", "latest", r"matrixRTC.image.tag.*>= 0.8.0"),
+    ],
+)
+@pytest.mark.asyncio_cooperative
+async def test_authorisation_service_replicas_validation(values, make_templates, redis, tag, error):
+    values["matrixRTC"]["replicas"] = 2
+    values["matrixRTC"]["image"] = {"tag": tag}
+    if redis == "none":
+        values["matrixRTC"]["sfu"] = {"redisOrValkey": {"host": "sfu-redis.example.test"}}
+    with pytest.raises(pyhelm3.errors.FailedToRenderChartError, match=error):
+        await make_templates(values)

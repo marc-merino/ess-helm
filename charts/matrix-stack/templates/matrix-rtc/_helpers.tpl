@@ -5,12 +5,27 @@ Copyright 2025-2026 Element Creations Ltd
 SPDX-License-Identifier: AGPL-3.0-only
 */ -}}
 
+{{- define "element-io.matrix-rtc-authorisation-service.supportsReplicas" -}}
+{{- $tag := .image.tag | default "" -}}
+{{- if and (regexMatch `^v?[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$` $tag) (semverCompare ">=0.8.0" $tag) -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "element-io.matrix-rtc.validations" }}
 {{- $root := .root -}}
 {{- with required "element-io.matrix-rtc.validations missing context" .context -}}
 {{ $messages := list }}
 {{- if not .ingress.host -}}
 {{ $messages = append $messages "matrixRTC.ingress.host is required when matrixRTC.enabled=true" }}
+{{- end }}
+{{- if gt (int .replicas) 1 }}
+{{- if not (or .redisOrValkey (include "element-io.valkey.internalValkeyEnabled" (dict "root" $root))) }}
+{{ $messages = append $messages "matrixRTC.replicas > 1 requires Redis/Valkey: configure matrixRTC.redisOrValkey or use the bundled Valkey." }}
+{{- end }}
+{{- if not (include "element-io.matrix-rtc-authorisation-service.supportsReplicas" .) }}
+{{ $messages = append $messages "matrixRTC.replicas > 1 requires matrixRTC.image.tag >= 0.8.0 (set the version tag alongside a digest)" }}
+{{- end }}
 {{- end }}
 {{- if and .sfu.exposedServices.turnTLS.enabled .sfu.exposedServices.turnTLS.tlsTerminationOnPod (not .sfu.exposedServices.turnTLS.tlsSecret) (not $root.Values.certManager) -}}
 {{ $messages = append $messages "matrixRTC.sfu.exposedServices.turnTLS.enabled with tlsTerminationOnPod=true requires either .sfu.exposedServices.turnTLS.tlsSecret or certManager to be configured." }}
@@ -84,6 +99,12 @@ env:
 {{- else }}
 - name: "LIVEKIT_REDIS_URL"
   value: "redis://{{ $root.Release.Name }}-valkey.{{ $root.Release.Namespace }}.svc.{{ $root.Values.clusterDomain }}:6379/2"
+{{- end }}
+{{- if and (or .redisOrValkey (include "element-io.valkey.internalValkeyEnabled" (dict "root" $root))) (include "element-io.matrix-rtc-authorisation-service.supportsReplicas" .) }}
+- name: "LIVEKIT_JWT_REPLICA_IP"
+  valueFrom:
+    fieldRef:
+      fieldPath: status.podIP
 {{- end }}
 - name: "LIVEKIT_KEY"
   value: {{ .livekitAuth.key }}
